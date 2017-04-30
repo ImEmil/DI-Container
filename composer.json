@@ -1,0 +1,16 @@
+{
+    "name": "imemil/container",
+    "description": "Simple dependency injection container built ontop of Dice",
+    "license": "MIT",
+    "keywords": ["Dependency injection", "ioc", "Dependency injection container", "DI"],
+    "require": {
+        "php": ">=5.6.3",
+        "ocramius/proxy-manager": "1.0.*"
+    },
+    "autoload": {
+    	"psr-4": {
+            "ImEmil\\Container\\": "src/"
+        }
+    },
+    "minimum-stability": "dev"
+}
