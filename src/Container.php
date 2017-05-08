@@ -13,6 +13,8 @@ use ImEmil\Container\ContainerRulesSet;
 use ImEmil\Container\Exception\NotFoundException;
 use ImEmil\Container\Traits\LazyLoaderAwareTrait;
 use ImEmil\Container\Contracts\ContainerInterface;
+use ImEmil\Container\ServiceProvider\ServiceProviderAggregate;
+use ImEmil\Container\ServiceProvider\ServiceProviderAggregateInterface;
 
 class Container extends Dice implements ArrayAccess, ContainerInterface
 {
@@ -41,9 +43,18 @@ class Container extends Dice implements ArrayAccess, ContainerInterface
         //
     ];
 
+    /**
+     * The service provider manager
+     * 
+     * @var \ImEmil\Container\ServiceProvider\ServiceProviderAggregateInterface
+     */
+    protected $providers;
+
     public function __construct(array $aliases = [])
     {
         $this->registerDefaultAliases($aliases);
+
+        $this->providers = (new ServiceProviderAggregate)->setContainer($this);
     }
 
     /**
@@ -81,6 +92,13 @@ class Container extends Dice implements ArrayAccess, ContainerInterface
         return (new MethodCaller($this))->call($callable, $args);
     }
 
+    /**
+     * Description
+     * 
+     * @param  string        $abstract 
+     * @param  \Closure|null $rules 
+     * @return mixed
+     */
     public function lazyLoad($abstract, Closure $rules = null)
     {
         $abstract = $this->getAlias($abstract);
@@ -90,6 +108,16 @@ class Container extends Dice implements ArrayAccess, ContainerInterface
         });
 
         return $this->getLazyLoader()->getProxy($abstract, $rules);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function addServiceProvider($provider)
+    {
+        $this->providers->add($provider);
+
+        return $this;
     }
 
     /**
@@ -138,6 +166,8 @@ class Container extends Dice implements ArrayAccess, ContainerInterface
      * @param  string $alias 
      * @param  \Closure|null $callback for what?
      * @return void
+     * 
+     * @throws \LogicException
      */
     public function alias($abstract, $alias, Closure $callback = null)
     {
@@ -174,6 +204,8 @@ class Container extends Dice implements ArrayAccess, ContainerInterface
      * 
      * @param  string $file 
      * @return void
+     * 
+     * @throws \LogicException
      */
     public function loadAliases($file)
     {
@@ -200,22 +232,20 @@ class Container extends Dice implements ArrayAccess, ContainerInterface
     /**
      * Register a binding
      * 
-     * @param  string   $abstract 
-     * @param  \Closure $callback 
-     * @param  bool     $share 
+     * @param  string $interface 
+     * @param  string $abstract 
      * @return mixed
      */
-    public function bind($abstract, Closure $callback, $share = false)
+    public function bind($interface, $abstract)
     {
         $abstract = $this->getAlias($abstract);
 
-        if($share && $this->has($abstract))
-            return $this->instances[$abstract];
+        if($this->has($abstract))
+        {
+            $this->instances[$interface] = $this->instances[$abstract];
+        }
 
-        if(!$share)
-            return $callback($this);
-
-        return $this->instances[$abstract] = $callback($this);
+        return $this;
     }
 
     /**
@@ -225,10 +255,17 @@ class Container extends Dice implements ArrayAccess, ContainerInterface
      * @param \Closure|null|array $args 
      * @param  array|array        $share 
      * @return mixed
+     * 
+     * @throws \NotFoundException
      */
     public function make($abstract, $args = [], array $share = [])
     {
         $abstract = $this->getAlias($abstract);
+
+        if($this->providers->provides($abstract))
+        {
+            $this->providers->register($abstract);
+        }
 
         if($this->has($abstract)) // do we have a shared instance?
             return $this->instances[$abstract];
@@ -244,7 +281,7 @@ class Container extends Dice implements ArrayAccess, ContainerInterface
             return parent::create($abstract, $args, $share);
         }
         catch(ReflectionException $e) {
-            throw $e;
+            throw new NotFoundException($e);
             //todo: handle exception
         }
     }
@@ -258,9 +295,14 @@ class Container extends Dice implements ArrayAccess, ContainerInterface
      */
     public function singleton($abstract, Closure $callback = null)
     {
-        $this->addRule($abstract = $this->getAlias($abstract), ['shared' => true]); // shared = return the same instace, => singleton
+        $abstract = $this->getAlias($abstract);
 
-        return $this->bind($abstract, $callback, true);
+        if($this->has($abstract))
+            return $this->instances[$abstract];
+
+        $this->addRule($abstract, ['shared' => true]); // shared = return the same instace, => singleton
+
+        return $this->instances[$abstract] = $callback($this);
     }
 
     /**
@@ -315,10 +357,13 @@ class Container extends Dice implements ArrayAccess, ContainerInterface
      * @param  string $key
      * @param  mixed  $value
      * @return void
+     * 
+     * @throws \BadMethodCallException
      */
     public function offsetSet($key, $value)
     {
-        $this->bind($key, $value);
+        //$this->bind($key, $value);
+        throw new \BadMethodCallException('Method: ' . __METHOD__ . ' currently disabled');
     }
 
     /**
@@ -341,5 +386,42 @@ class Container extends Dice implements ArrayAccess, ContainerInterface
     public function bound($abstract)
     {
         return $this->has($abstract) || $this->isAlias($abstract);
+    }
+
+    /*## My experimental methods here lol ##*/
+
+    /**
+     * @see https://r.je/dice.html#example3-1
+     * 
+     * @param  string        $class 
+     * @param  string        $needs 
+     * @param  string|object $implementation 
+     * @return $this
+     */
+    public function substitute($class, $needs, $implementation)
+    {
+        // this is basically almost like the 'bind' method, but here you have more flexibility.
+        // Bind only allows you to bind interfaces.
+
+        if(is_object($implementation))
+        {
+            $rule = [
+                'substitutions' => [$needs => $implementation]
+            ];
+        }
+        else
+        {
+            $rule = [
+                'substitutions' => [$needs => ['instance' => $implementation]]
+            ];
+        }
+
+        $abstract = ($class == '*') // wildcard = apply the rule to all existing rules
+            ? '*'
+            : $this->getAlias($class);
+
+        $this->addRule($abstract, $rule);
+
+        return $this;
     }
 }

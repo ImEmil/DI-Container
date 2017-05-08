@@ -56,14 +56,15 @@ interface ContainerInterface
      */
     public function instance($abstract, $instance);
 
+
     /**
-     * Description
+     * Register a binding
      * 
-     * @param  type $abstract 
-     * @param  \Closure $callback 
-     * @return type
+     * @param  string $interface 
+     * @param  string $abstract 
+     * @return mixed
      */
-    public function bind($abstract, \Closure $callback);
+    public function bind($interface, $abstract);
 
     /**
      * Description
