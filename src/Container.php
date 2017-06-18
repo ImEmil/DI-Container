@@ -50,6 +50,34 @@ class Container extends Dice implements ArrayAccess, ContainerInterface
      */
     protected $providers;
 
+    /**
+     * All of the global resolving callbacks
+     *
+     * @var array
+     */
+    protected $globalResolvingCallbacks = [];
+
+    /**
+     * All of the global after resolving callbacks
+     *
+     * @var array
+     */
+    protected $globalAfterResolvingCallbacks = [];
+
+    /**
+     * All of the resolving callbacks by class type
+     *
+     * @var array
+     */
+    protected $resolvingCallbacks = [];
+
+    /**
+     * All of the after resolving callbacks by class type.
+     *
+     * @var array
+     */
+    protected $afterResolvingCallbacks = [];
+
     public function __construct(array $aliases = [])
     {
         $this->registerDefaultAliases($aliases);
@@ -232,17 +260,21 @@ class Container extends Dice implements ArrayAccess, ContainerInterface
     /**
      * Register a binding
      * 
-     * @param  string $interface 
+     * @param  string $binding 
      * @param  string $abstract 
      * @return mixed
      */
-    public function bind($interface, $abstract)
+    public function bind($binding, $abstract)
     {
         $abstract = $this->getAlias($abstract);
 
         if($this->has($abstract))
         {
-            $this->instances[$interface] = $this->instances[$abstract];
+            $this->instances[$binding] = $this->instances[$abstract];
+        }
+        else
+        {
+            $this->instances[$binding] = $abstract; // _?_?_?
         }
 
         return $this;
@@ -270,7 +302,8 @@ class Container extends Dice implements ArrayAccess, ContainerInterface
         if($this->has($abstract)) // do we have a shared instance?
             return $this->instances[$abstract];
 
-        try {
+        try
+        {
 
             if($args instanceof Closure)
             {
@@ -278,9 +311,14 @@ class Container extends Dice implements ArrayAccess, ContainerInterface
                 $args = [];
             }
 
-            return parent::create($abstract, $args, $share);
+            $object = parent::create($abstract, $args, $share);
+
+            $this->fireResolvingCallbacks($abstract, $object);
+
+            return $object;
         }
-        catch(ReflectionException $e) {
+        catch(ReflectionException $e)
+        {
             throw new NotFoundException($e);
             //todo: handle exception
         }
@@ -423,5 +461,138 @@ class Container extends Dice implements ArrayAccess, ContainerInterface
         $this->addRule($abstract, $rule);
 
         return $this;
+    }
+
+    /**
+     * Register a new resolving callback.
+     *
+     * @param  string    $abstract
+     * @param  \Closure|null  $callback
+     * @return void
+     * 
+     * @see https://github.com/illuminate/container
+     */
+    public function resolving($abstract, Closure $callback = null)
+    {
+        if(is_string($abstract))
+        {
+            $abstract = $this->getAlias($abstract);
+        }
+
+        if(is_null($callback) && $abstract instanceof Closure)
+        {
+            $this->globalResolvingCallbacks[] = $abstract;
+        }
+        else
+        {
+            $this->resolvingCallbacks[$abstract][] = $callback;
+        }
+    }
+
+    /**
+     * Register a new after resolving callback for all types.
+     *
+     * @param  string   $abstract
+     * @param  \Closure|null $callback
+     * @return void
+     * 
+     * @see https://github.com/illuminate/container
+     */
+    public function afterResolving($abstract, Closure $callback = null)
+    {
+        if(is_string($abstract))
+        {
+            $abstract = $this->getAlias($abstract);
+        }
+
+        if($abstract instanceof Closure && is_null($callback))
+        {
+            $this->globalAfterResolvingCallbacks[] = $abstract;
+        }
+        else
+        {
+            $this->afterResolvingCallbacks[$abstract][] = $callback;
+        }
+    }
+
+    /**
+     * Fire all of the resolving callbacks.
+     *
+     * @param  string  $abstract
+     * @param  mixed   $object
+     * @return void
+     * 
+     * @see https://github.com/illuminate/container
+     */
+    protected function fireResolvingCallbacks($abstract, $object)
+    {
+        $this->fireCallbackArray($object, $this->globalResolvingCallbacks);
+
+        $this->fireCallbackArray(
+            $object, $this->getCallbacksForType($abstract, $object, $this->resolvingCallbacks)
+        );
+
+        $this->fireAfterResolvingCallbacks($abstract, $object);
+    }
+
+    /**
+     * Fire all of the after resolving callbacks.
+     *
+     * @param  string  $abstract
+     * @param  mixed   $object
+     * @return void
+     * 
+     * @see https://github.com/illuminate/container
+     */
+    protected function fireAfterResolvingCallbacks($abstract, $object)
+    {
+        $this->fireCallbackArray($object, $this->globalAfterResolvingCallbacks);
+
+        $this->fireCallbackArray(
+            $object, $this->getCallbacksForType($abstract, $object, $this->afterResolvingCallbacks)
+        );
+    }
+
+    /**
+     * Get all callbacks for a given type.
+     *
+     * @param  string  $abstract
+     * @param  object  $object
+     * @param  array   $callbacksPerType
+     *
+     * @return array
+     * 
+     * @see https://github.com/illuminate/container
+     */
+    protected function getCallbacksForType($abstract, $object, array $callbacksPerType)
+    {
+        $results = [];
+
+        foreach($callbacksPerType as $type => $callbacks)
+        {
+            if($type === $abstract || $object instanceof $type)
+            {
+                $results = array_merge($results, $callbacks);
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Fire an array of callbacks with an object.
+     *
+     * @param  mixed  $object
+     * @param  array  $callbacks
+     * @return void
+     * 
+     * @see https://github.com/illuminate/container
+     */
+    protected function fireCallbackArray($object, array $callbacks)
+    {
+        foreach($callbacks as $callback)
+        {
+            $callback($object, $this);
+        }
     }
 }
